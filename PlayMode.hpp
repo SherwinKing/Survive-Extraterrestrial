@@ -47,7 +47,9 @@ struct PlayMode : Mode {
 		// game status
 	enum GameStatus : uint32_t{
 		STOPPED,
-		ACTIVE
+		ACTIVE,
+		VICTORY,
+		LOST
 	};
 	GameStatus game_status = STOPPED;
 
@@ -56,7 +58,7 @@ struct PlayMode : Mode {
 	// score
 	uint32_t score = 0;
 	// bomb speed
-	float bomb_speed = 5.0f;
+	float bomb_speed = 1.0f;
 
 	//random generator
 	std::mt19937 mt; 
@@ -65,7 +67,21 @@ struct PlayMode : Mode {
 	Scene::Transform* bomb_init_transform;
 	std::list<Bomb> bombs;
 
+	//Antenna transforms
+	std::vector<Scene::Transform*> antenna_transforms;
+	std::vector<Scene::Transform*> antenna_top_transforms;
+	std::vector<Scene::Transform*> antenna_top_to_repair_transforms;
+
 	std::list<Bomb*> inactive_bomb_ptrs;
+
+	// timer for activate a bomb
+	double timer = 0.0f;
+	double bomb_interval = 0.5f;
+
+	double antenna_repair_time = 0.0f;
+	double need_repair_time = 10.0f;
+	int repaired_num = 0;
+	bool is_repairing = false;
 
 	//input tracking:
 	struct Button {

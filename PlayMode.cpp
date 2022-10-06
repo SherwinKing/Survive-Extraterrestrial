@@ -53,7 +53,8 @@ PlayMode::PlayMode() : scene(*space_scene) {
 	//create a player camera attached to a child of the player transform:
 	scene.transforms.emplace_back();
 	scene.cameras.emplace_back(&scene.transforms.back());
-	player.camera = &scene.cameras.back();
+	player.camera = &scene.cameras.front();
+	// player.camera = &scene.cameras.back();
 	player.camera->fovy = glm::radians(60.0f);
 	player.camera->near = 0.01f;
 	player.camera->transform->parent = player.transform;
@@ -67,10 +68,15 @@ PlayMode::PlayMode() : scene(*space_scene) {
 	//start player walking at nearest walk point:
 	player.at = walkmesh->nearest_walk_point(player.transform->position);
 
-	//initialize bomb transforms
+	//initialize bomb transforms and antenna transforms
 	for (auto &transform : scene.transforms) {
 		if (transform.name == "Bomb") {
 			bomb_init_transform = &transform;
+		} else if (transform.name.find("Antenna") != std::string::npos) {
+			antenna_transforms.push_back(&transform);
+		} else if (transform.name.find("Top") != std::string::npos) {
+			antenna_top_transforms.push_back(&transform);
+			antenna_top_to_repair_transforms.push_back(&transform);
 		}
 	}
 
@@ -80,7 +86,7 @@ PlayMode::PlayMode() : scene(*space_scene) {
 		Bomb &bomb = bombs.back();
 		bomb.sound_id = i;
 		bomb.transform.name = bomb_init_transform->name + std::to_string(i);
-		reset_bomb_position(bomb.transform);
+		activate_bomb_position(bomb.transform);
 		add_drawable(scene, &bomb.transform, "Bomb");
 	}
 }
@@ -115,19 +121,20 @@ void PlayMode::restart_game() {
 
 void PlayMode::reset_bomb_position(Scene::Transform &bomb_transform) {
 	bomb_transform.position = bomb_init_transform->position;
-	bomb_transform.position[0] = (float) -40;
-	bomb_transform.position[1] = -100;
-	bomb_transform.position[2] = (float)16 - 40 + 60 * ((double) mt()/(double)UINT32_MAX);
+	bomb_transform.position[0] = 0;
+	bomb_transform.position[1] = 0;
+	bomb_transform.position[2] = 0;
 	bomb_transform.rotation = bomb_init_transform->rotation;
 	bomb_transform.scale = bomb_init_transform->scale;
 	bomb_transform.parent = bomb_init_transform->parent;
 }
 
 void PlayMode::activate_bomb_position(Scene::Transform &bomb_transform) {
-	bomb_transform.position = bomb_init_transform->position;
-	bomb_transform.position[0] = - 100;
-	bomb_transform.position[1] = 30;
-	bomb_transform.position[2] = 0;
+	// uint32_t antenna_index = mt() % antenna_top_transforms.size();
+	// bomb_transform.position = antenna_top_transforms[antenna_index]->position;
+	bomb_transform.position = 1.5f * player.transform->position;
+	glm::vec3 random_direction = glm::normalize(glm::vec3(mt(), mt(), mt()));
+	bomb_transform.position += 50.0f * random_direction;
 	bomb_transform.rotation = bomb_init_transform->rotation;
 	bomb_transform.scale = bomb_init_transform->scale;
 	bomb_transform.parent = bomb_init_transform->parent;
@@ -138,9 +145,6 @@ void PlayMode::bomb_explode(Bomb &bomb, float bomb_distance) {
 	// recollect bomb
 	bomb.state = Inactive;
 	inactive_bomb_ptrs.push_back(&bomb);
-	// hp -= (int32_t) std::max((double) 0, (1000 / std::pow(0.75+bomb_distance/4, 3)));
-	// hp -= (int32_t) std::max((double) 0, std::pow(40 - bomb_distance, 3) / 16);
-	// hp = std::max(0, hp);
 	reset_bomb_position(bomb.transform);
 }
 
@@ -216,7 +220,7 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 
 void PlayMode::update(float elapsed) {
 	// if game is in STOPPED status
-	if (game_status == STOPPED) {
+	if (game_status == STOPPED || game_status == VICTORY || game_status == LOST) {
 		if (key_r.downs > 0) {
 			restart_game();
 		} else {
@@ -309,6 +313,39 @@ void PlayMode::update(float elapsed) {
 		*/
 	}
 
+	// Calculate if player is repairing an antenna
+	for (auto antenna_top_transform_it = antenna_top_to_repair_transforms.begin();
+			antenna_top_transform_it != antenna_top_to_repair_transforms.end();
+			antenna_top_transform_it++) {
+		if (glm::distance(player.transform->position, (*antenna_top_transform_it)->position) < 5.0f) {
+			antenna_repair_time += elapsed;
+			is_repairing = true;
+
+			if (antenna_repair_time > need_repair_time) {
+				antenna_top_to_repair_transforms.erase(antenna_top_transform_it);
+				repaired_num++;
+				antenna_repair_time = 0.0f;
+			}
+			break;
+		}
+		is_repairing = false;
+	}
+
+	if (repaired_num == 4) {
+		game_status = VICTORY;
+	}
+
+	timer += elapsed;
+	if (timer > bomb_interval) {
+		timer = 0.0f;
+		if (inactive_bomb_ptrs.size() > 0) {
+			Bomb *bomb_ptr = inactive_bomb_ptrs.back();
+			inactive_bomb_ptrs.pop_back();
+			activate_bomb_position(bomb_ptr->transform);
+			bomb_ptr->state = Active;
+		}
+	}
+
 	for (Bomb & bomb: bombs) {
 		// skip inactive bombs
 		if (bomb.state == Inactive)
@@ -318,12 +355,12 @@ void PlayMode::update(float elapsed) {
 		glm::mat4x3 camera_to_bomb = (bomb.transform.make_world_to_local() 
 			* glm::mat4(player.camera->transform->make_local_to_world()));
 		glm::vec3 camera_position_in_bomb_space = camera_to_bomb * camera_space_origin;
-		// bomb.transform.position += bomb_speed * glm::normalize(camera_position_in_bomb_space);
+		bomb.transform.position += bomb_speed * glm::normalize(camera_position_in_bomb_space);
 		
 		// distance between player (at camera) and bomb
 		float camera_to_bomb_distance = glm::length(camera_position_in_bomb_space);
 		
-		bomb.transform.position += bomb_speed * elapsed * glm::normalize(glm::vec3(1,0,0));
+		// bomb.transform.position += bomb_speed * elapsed * glm::normalize(glm::vec3(1,0,0));
 
 
 		// if player shoot bomb
@@ -339,8 +376,8 @@ void PlayMode::update(float elapsed) {
 			}
 		}
 
-		// if bomb go cross right boundary
-		if (bomb.transform.position[0] > 10) {
+		// if bomb go cross the ground
+		if (glm::length(bomb.transform.position) < 100 || glm::length(bomb.transform.position) > 170) {
 			bomb_explode(bomb, camera_to_bomb_distance);
 		}
 
@@ -400,7 +437,6 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 		}
 	}
 	*/
-
 	{ //use DrawLines to overlay some text:
 		glDisable(GL_DEPTH_TEST);
 		float aspect = float(drawable_size.x) / float(drawable_size.y);
@@ -412,47 +448,43 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 		));
 
 		constexpr float H = 0.09f;
-		lines.draw_text("Mouse motion looks; WASD moves; escape ungrabs mouse",
-			glm::vec3(-aspect + 0.1f * H, -1.0 + 0.1f * H, 0.0),
-			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
-			glm::u8vec4(0x00, 0x00, 0x00, 0x00));
-		float ofs = 2.0f / drawable_size.y;
-		lines.draw_text("Mouse motion looks; WASD moves; escape ungrabs mouse",
-			glm::vec3(-aspect + 0.1f * H + ofs, -1.0 + + 0.1f * H + ofs, 0.0),
-			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
-			glm::u8vec4(0xff, 0xff, 0xff, 0x00));
-	}
-
-	{ //use DrawLines to overlay some text:
-		glDisable(GL_DEPTH_TEST);
-		float aspect = float(drawable_size.x) / float(drawable_size.y);
-		DrawLines lines(glm::mat4(
-			1.0f / aspect, 0.0f, 0.0f, 0.0f,
-			0.0f, 1.0f, 0.0f, 0.0f,
-			0.0f, 0.0f, 1.0f, 0.0f,
-			0.0f, 0.0f, 0.0f, 1.0f
-		));
-
-		constexpr float H = 0.09f;
-		std::string game_info_string = "Score: " + std::to_string(score);
-		lines.draw_text(game_info_string,
-			glm::vec3(-aspect + 0.1f * H, -1.0 + 0.1f * H, 0.0),
-			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
-			glm::u8vec4(0x00, 0x00, 0x00, 0x00));
+		std::string game_info_string = "Score: " + std::to_string(score)+ ", HP: " + std::to_string(hp);
 		float ofs = 2.0f / drawable_size.y;
 		lines.draw_text(game_info_string,
 			glm::vec3(-aspect + 0.1f * H + ofs, -1.0 + + 0.1f * H + ofs, 0.0),
 			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
 			glm::u8vec4(0xff, 0xff, 0xff, 0x00));
 
-		// start game guidance
+		// start game guidance or game status information
 		std::string start_game_guidance = "Press R to start game";
+		std::string game_win_string = "Victory! Press R to restart game";
+		std::string game_lost_string = "We have lost. Press R to restart game";
 		if (game_status == STOPPED) {
 			lines.draw_text(start_game_guidance,
 				glm::vec3(-aspect + 0.5f * H, -1.0 + 0.1f * H + 0.5f, 0.0),
 				glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
 				glm::u8vec4(0xff, 0xff, 0xff, 0x00));
+		} else if (game_status == VICTORY) {
+			lines.draw_text(game_win_string,
+				glm::vec3(-aspect + 0.5f * H, -1.0 + 0.1f * H + 0.5f, 0.0),
+				glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
+				glm::u8vec4(0xff, 0xff, 0xff, 0x00));
+		} else if (game_status == LOST) {
+			lines.draw_text(game_lost_string,
+				glm::vec3(-aspect + 0.5f * H, -1.0 + 0.1f * H + 0.5f, 0.0),
+				glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
+				glm::u8vec4(0xff, 0xff, 0xff, 0x00));
+		}
+
+		// repairing string
+		std::string repairing_string = "Repairing antenna... Time left: " + std::to_string(need_repair_time - antenna_repair_time);
+		if (is_repairing)  {
+			lines.draw_text(repairing_string,
+				glm::vec3(-aspect + 0.5f * H + 0.5f, -1.0 + 0.1f * H + 0.5f, 0.0),
+				glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
+				glm::u8vec4(0xff, 0xff, 0xff, 0x00));
 		}
 	}
+
 	GL_ERRORS();
 }
