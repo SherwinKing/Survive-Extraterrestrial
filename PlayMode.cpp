@@ -81,7 +81,7 @@ PlayMode::PlayMode() : scene(*space_scene) {
 	}
 
 	//add bombs
-	for (int i = 0; i < 50; i++) {
+	for (int i = 0; i < 100; i++) {
 		bombs.emplace_back();
 		Bomb &bomb = bombs.back();
 		bomb.sound_id = i;

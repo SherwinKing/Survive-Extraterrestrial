@@ -60,7 +60,7 @@ struct PlayMode : Mode {
 	// score
 	uint32_t score = 0;
 	// bomb speed
-	float bomb_speed = 10.0f;
+	float bomb_speed = 20.0f;
 
 	//random generator
 	std::mt19937 mt; 
