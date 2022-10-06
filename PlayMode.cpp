@@ -87,6 +87,7 @@ PlayMode::PlayMode() : scene(*space_scene) {
 		bomb.sound_id = i;
 		bomb.transform.name = bomb_init_transform->name + std::to_string(i);
 		activate_bomb_position(bomb.transform);
+		set_bomb_velocity(bomb);
 		add_drawable(scene, &bomb.transform, "Bomb");
 	}
 }
@@ -97,6 +98,7 @@ PlayMode::~PlayMode() {
 void PlayMode::restart_game() {
 	hp = init_hp;
 	score = 0;
+	repaired_num = 0;
 
 	// Clear inactive_bomb_ptrs
 	inactive_bomb_ptrs.clear();
@@ -132,14 +134,26 @@ void PlayMode::reset_bomb_position(Scene::Transform &bomb_transform) {
 void PlayMode::activate_bomb_position(Scene::Transform &bomb_transform) {
 	// uint32_t antenna_index = mt() % antenna_top_transforms.size();
 	// bomb_transform.position = antenna_top_transforms[antenna_index]->position;
-	bomb_transform.position = 1.5f * player.transform->position;
+	bomb_transform.position = 1.2f * player.transform->position;
 	glm::vec3 random_direction = glm::normalize(glm::vec3(mt(), mt(), mt()));
-	bomb_transform.position += 50.0f * random_direction;
+
+	glm::vec3 random_horizontal_dir = glm::normalize(glm::cross(random_direction, player.transform->position));
+
+
+	bomb_transform.position += 100.0f * random_horizontal_dir;
 	bomb_transform.rotation = bomb_init_transform->rotation;
 	bomb_transform.scale = bomb_init_transform->scale;
 	bomb_transform.parent = bomb_init_transform->parent;
 }
 
+void PlayMode::set_bomb_velocity(Bomb & bomb) {
+	// set bomb velocity
+	const static glm::vec4 camera_space_origin = glm::vec4(0, 0, 0, 1);
+	glm::mat4x3 camera_to_bomb = (bomb.transform.make_world_to_local() 
+		* glm::mat4(player.camera->transform->make_local_to_world()));
+	glm::vec3 camera_position_in_bomb_space = camera_to_bomb * camera_space_origin;
+	bomb.velocity = glm::normalize(camera_position_in_bomb_space);
+}
 
 void PlayMode::bomb_explode(Bomb &bomb, float bomb_distance) {
 	// recollect bomb
@@ -325,6 +339,7 @@ void PlayMode::update(float elapsed) {
 				antenna_top_to_repair_transforms.erase(antenna_top_transform_it);
 				repaired_num++;
 				antenna_repair_time = 0.0f;
+				is_repairing = false;
 			}
 			break;
 		}
@@ -342,6 +357,7 @@ void PlayMode::update(float elapsed) {
 			Bomb *bomb_ptr = inactive_bomb_ptrs.back();
 			inactive_bomb_ptrs.pop_back();
 			activate_bomb_position(bomb_ptr->transform);
+			set_bomb_velocity(*bomb_ptr);
 			bomb_ptr->state = Active;
 		}
 	}
@@ -355,8 +371,9 @@ void PlayMode::update(float elapsed) {
 		glm::mat4x3 camera_to_bomb = (bomb.transform.make_world_to_local() 
 			* glm::mat4(player.camera->transform->make_local_to_world()));
 		glm::vec3 camera_position_in_bomb_space = camera_to_bomb * camera_space_origin;
-		bomb.transform.position += bomb_speed * glm::normalize(camera_position_in_bomb_space);
 		
+		bomb.transform.position += bomb_speed * elapsed * bomb.velocity;
+
 		// distance between player (at camera) and bomb
 		float camera_to_bomb_distance = glm::length(camera_position_in_bomb_space);
 		
@@ -377,7 +394,7 @@ void PlayMode::update(float elapsed) {
 		}
 
 		// if bomb go cross the ground
-		if (glm::length(bomb.transform.position) < 100 || glm::length(bomb.transform.position) > 170) {
+		if (glm::length(bomb.transform.position) < 100 || glm::length(bomb.transform.position) > 250) {
 			bomb_explode(bomb, camera_to_bomb_distance);
 		}
 
@@ -448,7 +465,7 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 		));
 
 		constexpr float H = 0.09f;
-		std::string game_info_string = "Score: " + std::to_string(score)+ ", HP: " + std::to_string(hp);
+		std::string game_info_string = "Antenna left to repair: " + std::to_string(4 - repaired_num)+ ", HP: " + std::to_string(hp);
 		float ofs = 2.0f / drawable_size.y;
 		lines.draw_text(game_info_string,
 			glm::vec3(-aspect + 0.1f * H + ofs, -1.0 + + 0.1f * H + ofs, 0.0),

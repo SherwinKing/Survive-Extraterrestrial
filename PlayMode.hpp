@@ -24,6 +24,7 @@ typedef struct Bomb {
 	BombState state = Inactive;
 	Scene::Transform transform;
 	uint32_t sound_id = 0;
+	glm::vec3 velocity = glm::vec3(0.0f);
 	Bomb(Bomb const &) = delete;
 	Bomb() = default;
 } Bomb;
@@ -42,6 +43,7 @@ struct PlayMode : Mode {
 	void reset_bomb_position(Scene::Transform &transform);
 	void activate_bomb_position(Scene::Transform &transform);
 	void bomb_explode(Bomb &bomb, float bomb_distance);
+	void set_bomb_velocity(Bomb &bomb);
 
 	//----- game state -----
 		// game status
@@ -58,7 +60,7 @@ struct PlayMode : Mode {
 	// score
 	uint32_t score = 0;
 	// bomb speed
-	float bomb_speed = 1.0f;
+	float bomb_speed = 10.0f;
 
 	//random generator
 	std::mt19937 mt; 
@@ -76,7 +78,7 @@ struct PlayMode : Mode {
 
 	// timer for activate a bomb
 	double timer = 0.0f;
-	double bomb_interval = 0.5f;
+	double bomb_interval = 1.0f;
 
 	double antenna_repair_time = 0.0f;
 	double need_repair_time = 10.0f;
