@@ -156,6 +156,9 @@ void PlayMode::set_bomb_velocity(Bomb & bomb) {
 }
 
 void PlayMode::bomb_explode(Bomb &bomb, float bomb_distance) {
+	// ref: based on game 2
+	hp -= (int32_t) std::max((double) 0, (1000 / std::pow(0.75+bomb_distance/4, 3)));
+	hp = std::max(0, hp);
 	// recollect bomb
 	bomb.state = Inactive;
 	inactive_bomb_ptrs.push_back(&bomb);
@@ -405,7 +408,7 @@ void PlayMode::update(float elapsed) {
 
 		// if player hp is 0
 		if (hp == 0) {
-			game_status = STOPPED;
+			game_status = LOST;
 		}
 	}
 	

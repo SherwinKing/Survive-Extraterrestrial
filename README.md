@@ -15,7 +15,7 @@ How To Play:
 Sources: (TODO: list a source URL for any assets you did not create yourself. Make sure you have a license for the asset.)
 
 Attributions:
-This game reuses some codes and blender assets of game3. All the codes copied from game3 are in the commit with tag `game3`.
+This game reuses some codes and blender assets of game2 and game3. All the codes copied from game2 and game3 are in the commit with tag `game2` and `game3`.
 
 
 This game was built with [NEST](NEST.md).
