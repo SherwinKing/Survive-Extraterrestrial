@@ -67,9 +67,81 @@ PlayMode::PlayMode() : scene(*space_scene) {
 	//start player walking at nearest walk point:
 	player.at = walkmesh->nearest_walk_point(player.transform->position);
 
+	//initialize bomb transforms
+	for (auto &transform : scene.transforms) {
+		if (transform.name == "Bomb") {
+			bomb_init_transform = &transform;
+		}
+	}
+
+	//add bombs
+	for (int i = 0; i < 50; i++) {
+		bombs.emplace_back();
+		Bomb &bomb = bombs.back();
+		bomb.sound_id = i;
+		bomb.transform.name = bomb_init_transform->name + std::to_string(i);
+		reset_bomb_position(bomb.transform);
+		add_drawable(scene, &bomb.transform, "Bomb");
+	}
 }
 
 PlayMode::~PlayMode() {
+}
+
+void PlayMode::restart_game() {
+	hp = init_hp;
+	score = 0;
+
+	// Clear inactive_bomb_ptrs
+	inactive_bomb_ptrs.clear();
+
+	// Reset bomb status
+	for (auto &bomb: bombs) {
+		bomb.state = Inactive;
+		inactive_bomb_ptrs.push_back(&bomb);
+		reset_bomb_position(bomb.transform);
+	}
+	game_status = ACTIVE;
+
+	//reset button press counters:
+	left_click.pressed = false;
+	key_r.downs = 0;
+	left.downs = 0;
+	right.downs = 0;
+	up.downs = 0;
+	down.downs = 0;
+}
+
+
+void PlayMode::reset_bomb_position(Scene::Transform &bomb_transform) {
+	bomb_transform.position = bomb_init_transform->position;
+	bomb_transform.position[0] = (float) -40;
+	bomb_transform.position[1] = -100;
+	bomb_transform.position[2] = (float)16 - 40 + 60 * ((double) mt()/(double)UINT32_MAX);
+	bomb_transform.rotation = bomb_init_transform->rotation;
+	bomb_transform.scale = bomb_init_transform->scale;
+	bomb_transform.parent = bomb_init_transform->parent;
+}
+
+void PlayMode::activate_bomb_position(Scene::Transform &bomb_transform) {
+	bomb_transform.position = bomb_init_transform->position;
+	bomb_transform.position[0] = - 100;
+	bomb_transform.position[1] = 30;
+	bomb_transform.position[2] = 0;
+	bomb_transform.rotation = bomb_init_transform->rotation;
+	bomb_transform.scale = bomb_init_transform->scale;
+	bomb_transform.parent = bomb_init_transform->parent;
+}
+
+
+void PlayMode::bomb_explode(Bomb &bomb, float bomb_distance) {
+	// recollect bomb
+	bomb.state = Inactive;
+	inactive_bomb_ptrs.push_back(&bomb);
+	// hp -= (int32_t) std::max((double) 0, (1000 / std::pow(0.75+bomb_distance/4, 3)));
+	// hp -= (int32_t) std::max((double) 0, std::pow(40 - bomb_distance, 3) / 16);
+	// hp = std::max(0, hp);
+	reset_bomb_position(bomb.transform);
 }
 
 bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size) {
@@ -94,6 +166,10 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 			down.downs += 1;
 			down.pressed = true;
 			return true;
+		} else if (evt.key.keysym.sym == SDLK_r) {
+			key_r.downs += 1;
+			key_r.pressed = true;
+			return true;
 		}
 	} else if (evt.type == SDL_KEYUP) {
 		if (evt.key.keysym.sym == SDLK_a) {
@@ -112,8 +188,9 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 	} else if (evt.type == SDL_MOUSEBUTTONDOWN) {
 		if (SDL_GetRelativeMouseMode() == SDL_FALSE) {
 			SDL_SetRelativeMouseMode(SDL_TRUE);
-			return true;
 		}
+		left_click.pressed = true;
+		return true;
 	} else if (evt.type == SDL_MOUSEMOTION) {
 		if (SDL_GetRelativeMouseMode() == SDL_TRUE) {
 			glm::vec2 motion = glm::vec2(
@@ -138,10 +215,19 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 }
 
 void PlayMode::update(float elapsed) {
+	// if game is in STOPPED status
+	if (game_status == STOPPED) {
+		if (key_r.downs > 0) {
+			restart_game();
+		} else {
+			return;
+		}
+	}
+
 	//player walking:
 	{
 		//combine inputs into a move:
-		constexpr float PlayerSpeed = 3.0f;
+		constexpr float PlayerSpeed = 30.0f;
 		glm::vec2 move = glm::vec2(0.0f);
 		if (left.pressed && !right.pressed) move.x =-1.0f;
 		if (!left.pressed && right.pressed) move.x = 1.0f;
@@ -223,7 +309,59 @@ void PlayMode::update(float elapsed) {
 		*/
 	}
 
+	for (Bomb & bomb: bombs) {
+		// skip inactive bombs
+		if (bomb.state == Inactive)
+			continue;
+
+		const static glm::vec4 camera_space_origin = glm::vec4(0, 0, 0, 1);
+		glm::mat4x3 camera_to_bomb = (bomb.transform.make_world_to_local() 
+			* glm::mat4(player.camera->transform->make_local_to_world()));
+		glm::vec3 camera_position_in_bomb_space = camera_to_bomb * camera_space_origin;
+		// bomb.transform.position += bomb_speed * glm::normalize(camera_position_in_bomb_space);
+		
+		// distance between player (at camera) and bomb
+		float camera_to_bomb_distance = glm::length(camera_position_in_bomb_space);
+		
+		bomb.transform.position += bomb_speed * elapsed * glm::normalize(glm::vec3(1,0,0));
+
+
+		// if player shoot bomb
+		if (left_click.pressed) {
+			glm::vec3 fire_line_dir = camera_to_bomb * glm::vec4(0, 0, 1, 0);
+			float intersection_indicator = std::pow(glm::dot(camera_position_in_bomb_space, fire_line_dir), 2) - std::pow(glm::length(camera_position_in_bomb_space), 2) + 2;
+			if (intersection_indicator >= 0) {
+				uint32_t points_got = (uint32_t) std::pow(std::max(0.0f, 10.0f - std::abs(bomb.transform.position[0])), 2);
+				score += points_got;
+				bomb_explode(bomb, camera_to_bomb_distance);
+				//// as you get higher score, the game gets harder
+				// bomb_speed = 0.1f + 0.0001f * score;
+			}
+		}
+
+		// if bomb go cross right boundary
+		if (bomb.transform.position[0] > 10) {
+			bomb_explode(bomb, camera_to_bomb_distance);
+		}
+
+		// if bomb hit player
+		if (glm::length(camera_position_in_bomb_space) < 0.5) {
+			bomb_explode(bomb, camera_to_bomb_distance);
+		}
+
+		// if player hp is 0
+		if (hp == 0) {
+			game_status = STOPPED;
+		}
+	}
+	
+	// press r to set game as STOPPED
+	if (key_r.downs > 0 && game_status == ACTIVE)
+		game_status = STOPPED;
+
 	//reset button press counters:
+	left_click.pressed = false;
+	key_r.downs = 0;
 	left.downs = 0;
 	right.downs = 0;
 	up.downs = 0;
@@ -283,6 +421,38 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 			glm::vec3(-aspect + 0.1f * H + ofs, -1.0 + + 0.1f * H + ofs, 0.0),
 			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
 			glm::u8vec4(0xff, 0xff, 0xff, 0x00));
+	}
+
+	{ //use DrawLines to overlay some text:
+		glDisable(GL_DEPTH_TEST);
+		float aspect = float(drawable_size.x) / float(drawable_size.y);
+		DrawLines lines(glm::mat4(
+			1.0f / aspect, 0.0f, 0.0f, 0.0f,
+			0.0f, 1.0f, 0.0f, 0.0f,
+			0.0f, 0.0f, 1.0f, 0.0f,
+			0.0f, 0.0f, 0.0f, 1.0f
+		));
+
+		constexpr float H = 0.09f;
+		std::string game_info_string = "Score: " + std::to_string(score);
+		lines.draw_text(game_info_string,
+			glm::vec3(-aspect + 0.1f * H, -1.0 + 0.1f * H, 0.0),
+			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
+			glm::u8vec4(0x00, 0x00, 0x00, 0x00));
+		float ofs = 2.0f / drawable_size.y;
+		lines.draw_text(game_info_string,
+			glm::vec3(-aspect + 0.1f * H + ofs, -1.0 + + 0.1f * H + ofs, 0.0),
+			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
+			glm::u8vec4(0xff, 0xff, 0xff, 0x00));
+
+		// start game guidance
+		std::string start_game_guidance = "Press R to start game";
+		if (game_status == STOPPED) {
+			lines.draw_text(start_game_guidance,
+				glm::vec3(-aspect + 0.5f * H, -1.0 + 0.1f * H + 0.5f, 0.0),
+				glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
+				glm::u8vec4(0xff, 0xff, 0xff, 0x00));
+		}
 	}
 	GL_ERRORS();
 }
